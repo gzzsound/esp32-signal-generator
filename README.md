@@ -9,19 +9,25 @@ The [ESP32 DevKitC V4](https://docs.espressif.com/projects/esp-idf/en/latest/esp
 
 ### Software
 
-The [Arduino](https://www.arduino.cc/en/Main/Software) software version 1.8.15 with the [esp32 board extension](https://github.com/espressif/arduino-esp32) version 1.0.6 was used for building and uploading. To upload the static web files to the device, [ESP32 Filesystem Uploader](https://randomnerdtutorials.com/install-esp32-filesystem-uploader-arduino-ide/) was used.
+Use [Arduino IDE 2.2.1 or newer](https://www.arduino.cc/en/software) with the [ESP32 board package](https://github.com/espressif/arduino-esp32). The firmware is compatible with ESP32 Arduino core 3.x.
+
+Static web files are stored on the device with LittleFS. Arduino IDE 2 does not support the old Arduino 1.x `ESP32 Sketch Data Upload` Java tool, so install the [arduino-littlefs-upload](https://github.com/earlephilhower/arduino-littlefs-upload) IDE 2 extension instead.
 
 ## Building
 
-Build and upload using Arduino. 
-Since the static files of the website are being served from a simple on-device filesystem, it is necessary to format the flash storage once prior to first use:
+Build and upload the sketch with Arduino IDE 2.
 
-1. Uncomment `#define FORMAT_FILESYSTEM` in *SigGen.ino*
-2. Build and upload
-3. Comment `#define FORMAT_FILESYSTEM` in *SigGen.ino*
-4. Build and upload again
-5. [Optional] If you changed the front-end code, run parcel
-6. In Arduino: **Tools > ESP32 Sketch Data Upload** (this copies the contents of */data* to the µC's flash memory)
+To upload the static web UI to the device:
+
+1. Install the `arduino-littlefs-upload` `.vsix` file into `~/.arduinoIDE/plugins/` and restart Arduino IDE 2.
+2. If you changed the front-end code, run `npm install` once in `gui/`, then run `npm run build` in `gui/`. This writes the generated web UI into `data/`.
+3. Select the ESP32 board, port, flash size, and partition scheme in Arduino IDE 2.
+4. Upload `SigGen.ino`.
+5. Close the Serial Monitor.
+6. Open the command palette with `Cmd+Shift+P` on macOS or `Ctrl+Shift+P` on Windows/Linux.
+7. Run `Upload LittleFS to Pico/ESP8266/ESP32`. This copies the contents of `data/` to the device's LittleFS partition.
+
+`FORMAT_FILESYSTEM` in `SigGen.ino` is disabled by default. Only enable it temporarily if you intentionally want to erase the on-device filesystem.
 
 ## First run
 
@@ -60,7 +66,7 @@ Visit `http://<DEVICE_IP>` to bring up the signal generator's UI, which is separ
 
 * **Channel** [1/2]: Selects the DAC channel. The ESP32 has two DAC channels (1 and 2) connected to GPIO pins 25 and 26, respectively.
 * **Clock divider** [0-7]: Selects the divider for the selected channel from the DAC clock, which runs at 135Hz.
-* **Invert** [Off/All/MSB/All but MSB]: Sets the inversion mode of the selected channel (MSB for non-inverted sine waves).
+* **Invert** [Off/All/MSB/All but MSB]: Sets the inversion mode of the selected channel. With ESP32 Arduino core 3.x, the DAC cosine driver maps these to supported 0°/180° phase inversion modes.
 * **Frequency** [17-135k]Hz: Sets the frequency of the selected channel (in Hz). The minimum and maximum frequency depend on the selected clock divider (min = 135/(clk_div + 1); max ≈ 135k/(clk_div + 1)). The DAC can still produce a signal above the maximum frequency, but it will become progressively distorted.
 * **Phase** [0-360]°: Sets the phase offset (in °). This cuts off the sine wave's tips.
 * **Amplitude** [⅛/¼/½/1]: Sets the amplitude to a fraction of the maximum (5V).

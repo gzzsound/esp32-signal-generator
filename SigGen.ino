@@ -34,20 +34,15 @@ SOFTWARE.
 #include "DAC_Module.h"
 #include "PWM_Module.h"
 
-#include "driver/dac.h"
 #include "driver/ledc.h"
 
-#define FILESYSTEM SPIFFS
 #define DBG_OUTPUT_PORT Serial
 
-#if FILESYSTEM == FFat
-    #include <FFat.h>
-#endif
-#if FILESYSTEM == SPIFFS
-    #include <SPIFFS.h>
-#endif
+#include <LittleFS.h>
 
-// #define FORMAT_FILESYSTEM  // Uncomment to format the file system (only necessary once before first data upload)
+#define FILESYSTEM LittleFS
+
+// #define FORMAT_FILESYSTEM  // Uncomment once to erase the filesystem during setup.
 // #define SHOW_PASSWORDS  // Uncomment to show passwords in debug serial output
 // #define FORCE_AP  // Uncomment to force device into access-point mode at startup (don't try to connect to WiFi)
 
@@ -74,6 +69,15 @@ IPAddress subnet;
 #define LOCAL_IP_SETTING 2
 #define GATEWAY_SETTING 3
 #define SUBNET_SETTING 4
+
+IPAddress parseIpOrZero(String value) {
+    IPAddress ip(0, 0, 0, 0);
+    value.trim();
+    if (value.length() > 0) {
+        ip.fromString(value);
+    }
+    return ip;
+}
 
 // Get MIME content type from file extension
 String getContentType(String filename) {
@@ -156,7 +160,7 @@ void handleSetup() {
     uint32_t out_pin = 25;
 
     // DAC-specific parameters
-    dac_channel_t dac_channel = DAC_CHANNEL_1;
+    int dac_channel = 1;
     uint32_t clk_div = 0;
     uint32_t scale = 0;
     uint32_t invert = 2;
@@ -170,7 +174,7 @@ void handleSetup() {
         if (server->argName(i) == "resolution") { resolution = (ledc_timer_bit_t)atoi(server->arg(i).c_str()); continue; }
         if (server->argName(i) == "timer_num") { timer_num = (ledc_timer_t)atoi(server->arg(i).c_str()); continue; }
         if (server->argName(i) == "pwm_channel") { pwm_channel = (ledc_channel_t)atoi(server->arg(i).c_str()); continue; }
-        if (server->argName(i) == "dac_channel") { dac_channel = (dac_channel_t)atoi(server->arg(i).c_str()); continue; }
+        if (server->argName(i) == "dac_channel") { dac_channel = atoi(server->arg(i).c_str()); continue; }
 
         // uint32_t
         if (server->argName(i) == "clk_div") { clk_div = strtoul(server->arg(i).c_str(), NULL, 10); continue; }
@@ -205,13 +209,13 @@ void handleSetup() {
 void handleStop() {
     String type = "square";
     ledc_channel_t pwm_channel = LEDC_CHANNEL_0;
-    dac_channel_t dac_channel = DAC_CHANNEL_1;
+    int dac_channel = 1;
     bool highspeed = true;
 
     for (uint8_t i = 0; i < server->args(); i++) {
         if (server->argName(i) == "type") { type = server->arg(i); continue; }
         if (server->argName(i) == "pwm_channel") { pwm_channel = (ledc_channel_t)atoi(server->arg(i).c_str()); continue; }
-        if (server->argName(i) == "dac_channel") { dac_channel = (dac_channel_t)atoi(server->arg(i).c_str()); continue; }
+        if (server->argName(i) == "dac_channel") { dac_channel = atoi(server->arg(i).c_str()); continue; }
         if (server->argName(i) == "highspeed") { highspeed = (server->arg(i) == "true"); continue; }
         server->send(400, "text/html", "Invalid parameter name: " + server->argName(i)); return;
     }
@@ -258,15 +262,15 @@ void handleConfig() {
                 Serial.println("'");
                 settings->StoreString(PASSWORD_SETTING, password);
             } else if (server->argName(i) == "local_ip"){
-                local_ip.fromString(server->arg(i));
+                local_ip = parseIpOrZero(server->arg(i));
                 Serial.println("Setting local_ip to '" + local_ip.toString() + "'");
                 settings->StoreIp(LOCAL_IP_SETTING, local_ip);
             } else if (server->argName(i) == "gateway"){
-                gateway.fromString(server->arg(i));
+                gateway = parseIpOrZero(server->arg(i));
                 Serial.println("Setting gateway to '" + gateway.toString() + "'");
                 settings->StoreIp(GATEWAY_SETTING, gateway);
             } else if (server->argName(i) == "subnet"){
-                subnet.fromString(server->arg(i));
+                subnet = parseIpOrZero(server->arg(i));
                 Serial.println("Setting subnet to '" + subnet.toString() + "'");
                 settings->StoreIp(SUBNET_SETTING, subnet);
             } else {
@@ -350,11 +354,13 @@ void loadSettings() {
 
 // Reset configuration defaults and store them in EEPROM
 void resetDefaults() {
+    settings->Reset();
+
     ssid = "";
     password = "";
-    local_ip.fromString("");
-    gateway.fromString("192.168.1.1");
-    subnet.fromString("255.255.255.0");
+    local_ip = IPAddress(0, 0, 0, 0);
+    gateway = IPAddress(0, 0, 0, 0);
+    subnet = IPAddress(0, 0, 0, 0);
     
     settings->StoreString(SSID_SETTING, ssid);
     settings->StoreString(PASSWORD_SETTING, password);
@@ -374,10 +380,16 @@ void setup() {
     #ifdef FORMAT_FILESYSTEM
         FILESYSTEM.format();
     #endif
-    FILESYSTEM.begin();
+    if (!FILESYSTEM.begin()) {
+        Serial.println("Failed to mount LittleFS. Upload the contents of the data folder to the device.");
+    }
 
     // Initialize and load settings from EEPROM
     settings = new Settings_Module(NUM_SETTINGS);
+    if (!settings->IsInitialized()) {
+        Serial.println("Settings not initialized. Writing defaults...");
+        resetDefaults();
+    }
     loadSettings();
 
     // Initialize WiFi module
@@ -394,6 +406,9 @@ void setup() {
         Serial.println("AP started successfully. IP: " + ip.toString());
     } else {
         Serial.println("Successfully connected to WiFi");
+        Serial.println("IP: " + WiFi.localIP().toString());
+        Serial.println("Gateway: " + WiFi.gatewayIP().toString());
+        Serial.println("Subnet: " + WiFi.subnetMask().toString());
     }
 
     // Initialize web server

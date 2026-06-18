@@ -27,9 +27,9 @@ function loadConfig() {
     $.get("/config").done(config_raw => {
         var config = JSON.parse(config_raw);
         $("*[name='ssid']").val(config.ssid);
-        $("*[name='local_ip']").val(config.local_ip);
-        $("*[name='gateway']").val(config.gateway);
-        $("*[name='subnet']").val(config.subnet);
+        $("*[name='local_ip']").val(config.local_ip == "0.0.0.0" ? "" : config.local_ip);
+        $("*[name='gateway']").val(config.gateway == "0.0.0.0" ? "" : config.gateway);
+        $("*[name='subnet']").val(config.subnet == "0.0.0.0" ? "" : config.subnet);
     });
 }
 
@@ -155,18 +155,9 @@ $(document).ready(function(){
             password: $("*[name='password']").val(),
         };
     
-        var local_ip = $("*[name='local_ip']").val();
-        if (local_ip) {
-            config.local_ip = local_ip;
-        }
-        var gateway = $("*[name='gateway']").val();
-        if (gateway) {
-            config.gateway = gateway;
-        }
-        var subnet = $("*[name='subnet']").val();
-        if (subnet) {
-            config.subnet = subnet;
-        }
+        config.local_ip = $("*[name='local_ip']").val() || "0.0.0.0";
+        config.gateway = $("*[name='gateway']").val() || "0.0.0.0";
+        config.subnet = $("*[name='subnet']").val() || "0.0.0.0";
         
         console.debug(config);
         

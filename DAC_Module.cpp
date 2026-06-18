@@ -1,143 +1,71 @@
-// Based on https://github.com/krzychb/dac-cosine/blob/master/main/dac-cosine.c
-
 #include "DAC_Module.h"
 
-void DAC_Module::Stop(dac_channel_t channel) {
-    dac_output_disable(channel);
-    dac_cosine_disable(channel);
-}
-
-/*
- * Enable cosine waveform generator on a DAC channel
- */
-void DAC_Module::dac_cosine_enable(dac_channel_t channel, int invert)
-{    
-    // Enable tone generator common to both channels
-    SET_PERI_REG_MASK(SENS_SAR_DAC_CTRL1_REG, SENS_SW_TONE_EN);
-    switch(channel) {
-        case DAC_CHANNEL_1:
-            // Enable / connect tone tone generator on / to this channel
-            SET_PERI_REG_MASK(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_CW_EN1_M);
-            // Invert MSB, otherwise part of waveform will have inverted
-            SET_PERI_REG_BITS(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_INV1, invert, SENS_DAC_INV1_S);
-            break;
-        case DAC_CHANNEL_2:
-            SET_PERI_REG_MASK(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_CW_EN2_M);
-            SET_PERI_REG_BITS(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_INV2, invert, SENS_DAC_INV2_S);
-            break;
-        default: break;
+dac_channel_t DAC_Module::normalizeChannel(int channel) {
+    if (channel == 2) {
+        return DAC_CHAN_1;
     }
-
+    return DAC_CHAN_0;
 }
 
-/*
- * Disables cosine waveform generator on a DAC channel
- */
-void DAC_Module::dac_cosine_disable(dac_channel_t channel)
-{    
-    // Disable tone generator common to both channels
-    // CLEAR_PERI_REG_MASK(SENS_SAR_DAC_CTRL1_REG, SENS_SW_TONE_EN);
-    switch(channel) {
-        case DAC_CHANNEL_1:
-            // Disable / connect tone tone generator on / to this channel
-            CLEAR_PERI_REG_MASK(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_CW_EN1_M);
-            break;
-        case DAC_CHANNEL_2:
-            CLEAR_PERI_REG_MASK(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_CW_EN2_M);
-            break;
-        default: break;
+int DAC_Module::channelIndex(int channel) {
+    dac_channel_t normalized = normalizeChannel(channel);
+    return normalized == DAC_CHAN_1 ? 1 : 0;
+}
+
+dac_cosine_atten_t DAC_Module::attenuationFromScale(int scale) {
+    switch (scale) {
+        case 1: return DAC_COSINE_ATTEN_DB_6;
+        case 2: return DAC_COSINE_ATTEN_DB_12;
+        case 3: return DAC_COSINE_ATTEN_DB_18;
+        default: return DAC_COSINE_ATTEN_DB_0;
     }
 }
 
-/*
- * Set frequency of internal CW generator common to both DAC channels
- *
- * clk_8m_div: 0b000 - 0b111
- * frequency: range 0x0001 - 0xFFFF
- *
- */
-void DAC_Module::dac_frequency_set(int clk_8m_div, int frequency)
-{
-    REG_SET_FIELD(RTC_CNTL_CLK_CONF_REG, RTC_CNTL_CK8M_DIV_SEL, clk_8m_div);
-    SET_PERI_REG_BITS(SENS_SAR_DAC_CTRL1_REG, SENS_SW_FSTEP, frequency, SENS_SW_FSTEP_S);
+dac_cosine_phase_t DAC_Module::phaseFromInvert(int invert) {
+    // The ESP-IDF 5 cosine driver supports phase inversion, not bit-pattern inversion.
+    return (invert == 1 || invert == 3) ? DAC_COSINE_PHASE_180 : DAC_COSINE_PHASE_0;
 }
 
-
-/*
- * Scale output of a DAC channel using two bit pattern:
- *
- * - 00: no scale
- * - 01: scale to 1/2
- * - 10: scale to 1/4
- * - 11: scale to 1/8
- *
- */
-void DAC_Module::dac_scale_set(dac_channel_t channel, int scale)
-{
-    switch(channel) {
-        case DAC_CHANNEL_1:
-            SET_PERI_REG_BITS(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_SCALE1, scale, SENS_DAC_SCALE1_S);
-            break;
-        case DAC_CHANNEL_2:
-            SET_PERI_REG_BITS(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_SCALE2, scale, SENS_DAC_SCALE2_S);
-            break;
-        default :
-           printf("Channel %d\n", channel);
+void DAC_Module::Stop(int channel) {
+    int index = channelIndex(channel);
+    if (handles[index] == nullptr) {
+        return;
     }
+
+    dac_cosine_stop(handles[index]);
+    dac_cosine_del_channel(handles[index]);
+    handles[index] = nullptr;
 }
 
-/*
- * Offset output of a DAC channel
- *
- * Range 0x00 - 0xFF
- *
- */
-void DAC_Module::dac_offset_set(dac_channel_t channel, int offset)
-{
-    switch(channel) {
-        case DAC_CHANNEL_1:
-            SET_PERI_REG_BITS(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_DC1, offset, SENS_DAC_DC1_S);
-            break;
-        case DAC_CHANNEL_2:
-            SET_PERI_REG_BITS(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_DC2, offset, SENS_DAC_DC2_S);
-            break;
-        default :
-           printf("Channel %d\n", channel);
+void DAC_Module::Setup(int channel, int clk_div, int frequency, int scale, int phase, int invert) {
+    dac_channel_t normalized = normalizeChannel(channel);
+    int index = channelIndex(channel);
+
+    Stop(channel);
+
+    uint32_t output_frequency = max(130, (int)(frequency * (135.0 / (clk_div + 1.0)) + 0.5));
+    int8_t offset = (int8_t)constrain(phase, 0, 127);
+
+    dac_cosine_config_t config = {};
+    config.chan_id = normalized;
+    config.freq_hz = output_frequency;
+    config.clk_src = DAC_COSINE_CLK_SRC_DEFAULT;
+    config.atten = attenuationFromScale(scale);
+    config.phase = phaseFromInvert(invert);
+    config.offset = offset;
+    config.flags.force_set_freq = true;
+
+    esp_err_t err = dac_cosine_new_channel(&config, &handles[index]);
+    if (err != ESP_OK) {
+        Serial.printf("Failed to create DAC cosine channel: %s\n", esp_err_to_name(err));
+        handles[index] = nullptr;
+        return;
     }
-}
 
-/*
- * Invert output pattern of a DAC channel
- *
- * - 00: does not invert any bits,
- * - 01: inverts all bits,
- * - 10: inverts MSB,
- * - 11: inverts all bits except for MSB
- *
- */
-void DAC_Module::dac_invert_set(dac_channel_t channel, int invert)
-{
-    switch(channel) {
-        case DAC_CHANNEL_1:
-            SET_PERI_REG_BITS(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_INV1, invert, SENS_DAC_INV1_S);
-            break;
-        case DAC_CHANNEL_2:
-            SET_PERI_REG_BITS(SENS_SAR_DAC_CTRL2_REG, SENS_DAC_INV2, invert, SENS_DAC_INV2_S);
-            break;
-        default :
-           printf("Channel %d\n", channel);
+    err = dac_cosine_start(handles[index]);
+    if (err != ESP_OK) {
+        Serial.printf("Failed to start DAC cosine channel: %s\n", esp_err_to_name(err));
+        dac_cosine_del_channel(handles[index]);
+        handles[index] = nullptr;
     }
-}
-
-void DAC_Module::Setup(dac_channel_t channel, int clk_div, int frequency, int scale, int phase, int invert) {
-
-    // frequency setting is common to both channels
-    dac_frequency_set(clk_div, frequency);
-
-    dac_scale_set(channel, scale);
-    dac_offset_set(channel, phase);
-
-    dac_cosine_enable(channel, invert);    
-    dac_output_enable(channel);
-
 }

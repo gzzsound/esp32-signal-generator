@@ -1,11 +1,15 @@
 {
     "dependencies": {
         "jquery": "^3.4.1",
+        "materialize-css": "^1.0.0",
         "parcel": "^1.12.4",
         "parcel-plugin-inliner": "^1.0.14"
     },
     "scripts": {
         "dev": "parcel index.html",
-        "build": "rm ../data/*; parcel build index.html; cp dist/index.html ../data"
+        "build": "mkdir -p ../data && rm -f ../data/* && cross-env NODE_OPTIONS=--openssl-legacy-provider parcel build index.html && cp dist/index.html ../data/index.html && node -e \"const fs=require('fs');const p='../data/index.html';fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace(/\\\\r\\\\n/g,'\\\\n').replace(/[ \\\\t]+\\\\n/g,'\\\\n').replace(/[ \\\\t]+$/,''));\""
+    },
+    "devDependencies": {
+        "cross-env": "^10.1.0"
     }
 }
